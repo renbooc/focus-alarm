@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Focus Alarm",
+    "description": "A draggable floating card combining a Pomodoro timer, an off-work countdown, and focus stats. Every launch opens on the focus phase; phase completion triggers a chime, a card shake, and a particle burst. Includes today's pomodoros, focus minutes, streak and a 7-day chart; rhythm reminders for wrapping up, eye rest and overtime; optional system notifications, tab-title timer, auto-start, +5 min, custom long-break interval and sound toggle."
+  }
+}

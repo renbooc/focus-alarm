@@ -370,8 +370,11 @@ window.__ModuleLoader__.load({
       const top = Number(raw.top);
       if (!isFinite(left) || !isFinite(top)) return null;
       return {
-        left: Math.round(clamp(left, 4, Math.max(4, window.innerWidth - CARD_W - 4))),
-        top: Math.round(clamp(top, 4, Math.max(4, window.innerHeight - 60))),
+        // Clamp only against the viewport, not the expanded card width: the
+        // minimized pill is much narrower, so a position saved while minimized
+        // must not be pulled left when the page reloads.
+        left: Math.round(clamp(left, 4, Math.max(4, window.innerWidth - 60))),
+        top: Math.round(clamp(top, 4, Math.max(4, window.innerHeight - 40))),
       };
     }
 
@@ -570,7 +573,8 @@ window.__ModuleLoader__.load({
       '.owc-bar{width:100%;max-width:18px;min-height:2px;border-radius:3px 3px 1px 1px;background:var(--dsw-alias-brand-primary);opacity:.85}',
       '.owc-bar-empty{background:var(--dsw-alias-border-l2);opacity:1}',
       '.owc-day-label{font-size:9px;color:var(--dsw-alias-label-secondary)}',
-      '.owc-mini{position:fixed;box-sizing:border-box;display:inline-flex;align-items:center;gap:7px;margin:0;padding:5px 11px 5px 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:pointer;pointer-events:auto;box-shadow:' + SHADOW + ';backdrop-filter:blur(10px)}',
+      '.owc-mini{position:fixed;box-sizing:border-box;display:inline-flex;align-items:center;gap:7px;margin:0;padding:5px 11px 5px 9px;border:1px solid var(--dsw-alias-border-l1);border-radius:999px;background:var(--dsw-alias-bg-overlay);color:var(--dsw-alias-label-secondary);font:inherit;font-size:12px;line-height:18px;cursor:grab;pointer-events:auto;user-select:none;touch-action:none;box-shadow:' + SHADOW + ';backdrop-filter:blur(10px)}',
+      '.owc-mini:active{cursor:grabbing}',
       '.owc-mini:hover{background:var(--dsw-alias-bg-layer-1)}',
       '.owc-mini:focus-visible{outline:2px solid var(--dsw-alias-brand-primary);outline-offset:2px}',
       '.owc-mini-time{font-variant-numeric:tabular-nums;font-weight:600;font-size:12.5px;letter-spacing:.01em}',
@@ -787,6 +791,7 @@ window.__ModuleLoader__.load({
       const [note, setNote] = React.useState(null);
 
       const drag = React.useRef(null);
+      const suppressClickRef = React.useRef(false);
       const posRef = React.useRef(pos);
       posRef.current = pos;
       const statsRef = React.useRef(stats);
@@ -1057,17 +1062,24 @@ window.__ModuleLoader__.load({
         if (e.button !== 0) return;
         const target = e.target;
         if (target && target.closest && target.closest('button, input, a')) return;
-        const card = e.currentTarget.parentNode;
-        if (!card || !card.getBoundingClientRect) return;
-        const rect = card.getBoundingClientRect();
+        // The handle is either the card itself (expanded title bar) or the
+        // minimized pill. Both are themselves position:fixed and draggable.
+        const handle = e.currentTarget;
+        const box = handle.getBoundingClientRect ? handle : handle.parentNode;
+        if (!box || !box.getBoundingClientRect) return;
+        const rect = box.getBoundingClientRect();
         drag.current = {
           dx: e.clientX - rect.left,
           dy: e.clientY - rect.top,
           w: rect.width,
           h: rect.height,
+          startX: e.clientX,
+          startY: e.clientY,
+          moved: false,
         };
-        if (e.currentTarget.setPointerCapture) {
-          e.currentTarget.setPointerCapture(e.pointerId);
+        suppressClickRef.current = false;
+        if (handle.setPointerCapture) {
+          handle.setPointerCapture(e.pointerId);
         }
         e.preventDefault();
       }
@@ -1075,6 +1087,11 @@ window.__ModuleLoader__.load({
       function onPointerMove(e) {
         const s = drag.current;
         if (!s) return;
+        if (!s.moved) {
+          const dist = Math.abs(e.clientX - s.startX) + Math.abs(e.clientY - s.startY);
+          if (dist < 4) return;
+          s.moved = true;
+        }
         setPos({
           left: Math.round(
             clamp(e.clientX - s.dx, 4, Math.max(4, window.innerWidth - s.w - 4)),
@@ -1086,9 +1103,20 @@ window.__ModuleLoader__.load({
       }
 
       function onPointerUp() {
-        if (!drag.current) return;
+        const s = drag.current;
+        if (!s) return;
         drag.current = null;
-        writeJSON(KEY_POS, posRef.current);
+        if (s.moved) {
+          suppressClickRef.current = true;
+          writeJSON(KEY_POS, posRef.current);
+        }
+      }
+
+      function onClickCapture(e) {
+        if (!suppressClickRef.current) return;
+        suppressClickRef.current = false;
+        e.stopPropagation();
+        e.preventDefault();
       }
 
       function openSettings() {
@@ -1320,6 +1348,11 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'owc-mini',
             style: anchor,
+            onPointerDown: onPointerDown,
+            onPointerMove: onPointerMove,
+            onPointerUp: onPointerUp,
+            onPointerCancel: onPointerUp,
+            onClickCapture: onClickCapture,
             onClick: expand,
             title: d.expand,
             'aria-label': d.title + ' ' + miniSt.label + ' ' + miniSt.value,
@@ -1343,6 +1376,7 @@ window.__ModuleLoader__.load({
           onPointerMove: onPointerMove,
           onPointerUp: onPointerUp,
           onPointerCancel: onPointerUp,
+          onClickCapture: onClickCapture,
         },
         h(
           'div',

@@ -1,6 +1,6 @@
 {
   "name": "@local/offwork-countdown",
-  "version": "1.3.0",
+  "version": "1.3.1",
   "private": true,
   "type": "module",
   "description": "专注闹钟：DeepSeek Harness Web 的悬浮番茄钟，含下班倒计时、专注统计、节律提醒与系统通知。",

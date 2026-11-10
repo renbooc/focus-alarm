@@ -792,6 +792,7 @@ window.__ModuleLoader__.load({
 
       const drag = React.useRef(null);
       const suppressClickRef = React.useRef(false);
+      const suppressClickThisEvent = React.useRef(false);
       const posRef = React.useRef(pos);
       posRef.current = pos;
       const statsRef = React.useRef(stats);
@@ -1058,13 +1059,18 @@ window.__ModuleLoader__.load({
         [settings.titleSync, pomo.running, pomo.endsAt, leftMs, phaseLabel],
       );
 
-      function onPointerDown(e) {
+      // `fromPill` is true when the handle IS the minimized pill (a <button>).
+      // On the expanded card the pointer events live on the .owc-head <div>,
+      // whose children include real buttons (tabs, gear, minimize): those must
+      // not start a drag. The pill itself is a button, so the same guard would
+      // veto every drag attempt — hence the explicit distinction.
+      function onPointerDown(e, fromPill) {
         if (e.button !== 0) return;
-        const target = e.target;
-        if (target && target.closest && target.closest('button, input, a')) return;
-        // The handle is either the card itself (expanded title bar) or the
-        // minimized pill. Both are themselves position:fixed and draggable.
         const handle = e.currentTarget;
+        if (!fromPill) {
+          const target = e.target;
+          if (target && target.closest && target.closest('button, input, a')) return;
+        }
         const box = handle.getBoundingClientRect ? handle : handle.parentNode;
         if (!box || !box.getBoundingClientRect) return;
         const rect = box.getBoundingClientRect();
@@ -1078,10 +1084,25 @@ window.__ModuleLoader__.load({
           moved: false,
         };
         suppressClickRef.current = false;
-        if (handle.setPointerCapture) {
-          handle.setPointerCapture(e.pointerId);
+        try {
+          if (handle.setPointerCapture) handle.setPointerCapture(e.pointerId);
+        } catch (err) {
+          /* Pointer capture is best-effort; window listeners below are the fallback. */
         }
+        window.addEventListener('pointermove', onWindowPointerMove);
+        window.addEventListener('pointerup', onWindowPointerUp);
         e.preventDefault();
+      }
+
+      // Global fallbacks: pointer capture is not guaranteed (some hosts dispatch
+      // through synthetic events), and without them a drag that leaves the pill
+      // would stop updating. All three are removed on pointerup / unmount.
+      function onWindowPointerMove(e) {
+        onPointerMove(e);
+      }
+
+      function onWindowPointerUp() {
+        onPointerUp();
       }
 
       function onPointerMove(e) {
@@ -1092,6 +1113,8 @@ window.__ModuleLoader__.load({
           if (dist < 4) return;
           s.moved = true;
         }
+        s.lastX = e.clientX;
+        s.lastY = e.clientY;
         setPos({
           left: Math.round(
             clamp(e.clientX - s.dx, 4, Math.max(4, window.innerWidth - s.w - 4)),
@@ -1103,20 +1126,56 @@ window.__ModuleLoader__.load({
       }
 
       function onPointerUp() {
+        window.removeEventListener('pointermove', onWindowPointerMove);
+        window.removeEventListener('pointerup', onWindowPointerUp);
         const s = drag.current;
         if (!s) return;
         drag.current = null;
         if (s.moved) {
           suppressClickRef.current = true;
-          writeJSON(KEY_POS, posRef.current);
+          // Save the position computed in this very move, not posRef.current:
+          // React may not have committed the last setPos render yet.
+          const finalPos = {
+            left: Math.round(
+              clamp(s.lastX - s.dx, 4, Math.max(4, window.innerWidth - s.w - 4)),
+            ),
+            top: Math.round(
+              clamp(s.lastY - s.dy, 4, Math.max(4, window.innerHeight - s.h - 4)),
+            ),
+          };
+          posRef.current = finalPos;
+          setPos(finalPos);
+          writeJSON(KEY_POS, finalPos);
         }
       }
 
-      function onClickCapture(e) {
-        if (!suppressClickRef.current) return;
-        suppressClickRef.current = false;
-        e.stopPropagation();
-        e.preventDefault();
+      // A drag ends with a click on the same element. Capture and bubble
+      // handlers on that element must see the SAME verdict, so the flag is
+      // consumed once per click by the capture handler and the result is
+      // stashed for the bubble handler on that same element.
+      function onPillClickCapture(e) {
+        suppressClickThisEvent.current = suppressClickRef.current;
+        if (suppressClickThisEvent.current) {
+          suppressClickRef.current = false;
+          e.stopPropagation();
+          e.preventDefault();
+        }
+      }
+
+      function onPillClick() {
+        if (suppressClickThisEvent.current) {
+          suppressClickThisEvent.current = false;
+          return;
+        }
+        expand();
+      }
+
+      function onHeadClickCapture(e) {
+        if (suppressClickRef.current) {
+          suppressClickRef.current = false;
+          e.stopPropagation();
+          e.preventDefault();
+        }
       }
 
       function openSettings() {
@@ -1348,12 +1407,13 @@ window.__ModuleLoader__.load({
             type: 'button',
             className: 'owc-mini',
             style: anchor,
-            onPointerDown: onPointerDown,
-            onPointerMove: onPointerMove,
+            onPointerDown: function (e) {
+              onPointerDown(e, true);
+            },
             onPointerUp: onPointerUp,
             onPointerCancel: onPointerUp,
-            onClickCapture: onClickCapture,
-            onClick: expand,
+            onClickCapture: onPillClickCapture,
+            onClick: onPillClick,
             title: d.expand,
             'aria-label': d.title + ' ' + miniSt.label + ' ' + miniSt.value,
           },
@@ -1372,11 +1432,12 @@ window.__ModuleLoader__.load({
         'div',
         {
           className: 'owc-head',
-          onPointerDown: onPointerDown,
-          onPointerMove: onPointerMove,
+          onPointerDown: function (e) {
+            onPointerDown(e, false);
+          },
           onPointerUp: onPointerUp,
           onPointerCancel: onPointerUp,
-          onClickCapture: onClickCapture,
+          onClickCapture: onHeadClickCapture,
         },
         h(
           'div',
